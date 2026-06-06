@@ -1,0 +1,425 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// USER & AUTHENTICATION MODELS
+// ============================================
+
+model User {
+  id                String    @id @default(cuid())
+  clerkId           String    @unique
+  email             String    @unique
+  firstName         String?
+  lastName          String?
+  phone             String?
+  profileImage      String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relationships
+  groupMemberships  GroupMember[]
+  shares            Share[]
+  loans             Loan[]
+  repayments        Repayment[]
+  approvals         Approval[]
+  cryptoWallets     CryptoWallet[]
+  transactions      Transaction[]
+  activityLogs      ActivityLog[]
+
+  @@index([clerkId])
+}
+
+// ============================================
+// GROUP MANAGEMENT MODELS
+// ============================================
+
+model Group {
+  id                String    @id @default(cuid())
+  name              String
+  description       String?
+  logo              String?
+  country           String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Group configuration
+  maxMembers        Int       @default(25)
+  minMembers        Int       @default(15)
+  loanInterestMin   Float     @default(5.0)
+  loanInterestMax   Float     @default(10.0)
+  loanDurationMin   Int       @default(9)
+  loanDurationMax   Int       @default(12)
+  loanMultiplier    Float     @default(3.0)
+  approvalsRequired Int       @default(2)
+
+  // Relationships
+  members           GroupMember[]
+  shares            Share[]
+  loans             Loan[]
+  transactions      Transaction[]
+  activityLogs      ActivityLog[]
+
+  @@index([createdAt])
+}
+
+model GroupMember {
+  id                String    @id @default(cuid())
+  groupId           String
+  userId            String
+  role              Role      @default(MEMBER)
+  joinedAt          DateTime  @default(now())
+  status            MemberStatus @default(ACTIVE)
+
+  // Relationships
+  group             Group     @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
+  @@index([groupId])
+  @@index([userId])
+}
+
+enum Role {
+  PRESIDENT
+  TREASURER1
+  TREASURER2
+  MEMBER
+}
+
+enum MemberStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  REMOVED
+}
+
+// ============================================
+// SAVINGS (SHARES) MODELS
+// ============================================
+
+model Share {
+  id                String    @id @default(cuid())
+  groupId           String
+  userId            String
+  quantity          Float     @default(0)
+  pricePerShare     Float     @default(1.0)
+  totalValue        Float     @default(0)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relationships
+  group             Group     @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions      Transaction[]
+
+  @@unique([groupId, userId])
+  @@index([groupId])
+  @@index([userId])
+}
+
+// ============================================
+// LOAN MODELS
+// ============================================
+
+model Loan {
+  id                String    @id @default(cuid())
+  groupId           String
+  userId            String
+  requestedAmount   Float
+  approvedAmount    Float?
+  interestRate      Float     @default(7.5)
+  duration          Int       @default(12)
+  monthlyPayment    Float?
+  status            LoanStatus @default(PENDING)
+  disbursedAt       DateTime?
+  completedAt       DateTime?
+  defaultedAt       DateTime?
+  reason            String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relationships
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group             Group     @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  approvals         Approval[]
+  repayments        Repayment[]
+  transactions      Transaction[]
+
+  @@index([groupId])
+  @@index([userId])
+  @@index([status])
+}
+
+enum LoanStatus {
+  PENDING
+  APPROVED
+  ACTIVE
+  COMPLETED
+  DEFAULTED
+  REJECTED
+  CANCELLED
+}
+
+model Repayment {
+  id                String    @id @default(cuid())
+  loanId            String
+  userId            String
+  amount            Float
+  dueDate           DateTime
+  paidDate          DateTime?
+  status            RepaymentStatus @default(PENDING)
+  penalty           Float     @default(0)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relationships
+  loan              Loan      @relation(fields: [loanId], references: [id], onDelete: Cascade)
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([loanId])
+  @@index([userId])
+  @@index([status])
+}
+
+enum RepaymentStatus {
+  PENDING
+  PAID
+  OVERDUE
+  PARTIALLY_PAID
+  WAIVED
+}
+
+// ============================================
+// APPROVAL WORKFLOW MODELS
+// ============================================
+
+model Approval {
+  id                String    @id @default(cuid())
+  loanId            String?
+  withdrawalId      String?
+  approvedBy        String
+  status            ApprovalStatus @default(PENDING)
+  notes             String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relationships
+  loan              Loan?     @relation(fields: [loanId], references: [id], onDelete: SetNull)
+  user              User      @relation(fields: [approvedBy], references: [id], onDelete: Cascade)
+  withdrawal        Withdrawal? @relation(fields: [withdrawalId], references: [id], onDelete: SetNull)
+
+  @@index([loanId])
+  @@index([withdrawalId])
+  @@index([approvedBy])
+  @@index([status])
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// ============================================
+// CRYPTO & TRANSACTION MODELS
+// ============================================
+
+model CryptoWallet {
+  id                String    @id @default(cuid())
+  userId            String
+  network           CryptoNetwork
+  walletAddress     String
+  isVerified        Boolean   @default(false)
+  lastVerifiedAt    DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relationships
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions      Transaction[]
+
+  @@unique([userId, network, walletAddress])
+  @@index([userId])
+  @@index([network])
+}
+
+enum CryptoNetwork {
+  TRC20   // Tron
+  BEP20   // Binance Smart Chain
+}
+
+model Transaction {
+  id                String    @id @default(cuid())
+  groupId           String
+  userId            String
+  shareId           String?
+  cryptoWalletId    String?
+  type              TransactionType
+  amount            Float
+  currency          String    @default("USD")
+  cryptoAmount      Float?
+  cryptoSymbol      String?
+  txHash            String?
+  status            TransactionStatus @default(PENDING)
+  description       String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relationships
+  group             Group     @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  share             Share?    @relation(fields: [shareId], references: [id], onDelete: SetNull)
+  cryptoWallet      CryptoWallet? @relation(fields: [cryptoWalletId], references: [id], onDelete: SetNull)
+  loan              Loan?     @relation(fields: [loanId], references: [id], onDelete: SetNull)
+
+  loanId            String?
+
+  @@index([groupId])
+  @@index([userId])
+  @@index([status])
+  @@index([type])
+}
+
+enum TransactionType {
+  SHARE_PURCHASE
+  SHARE_SALE
+  LOAN_DISBURSEMENT
+  LOAN_REPAYMENT
+  WITHDRAWAL
+  DEPOSIT
+  PENALTY
+  INTEREST
+  ADMIN_FEE
+}
+
+enum TransactionStatus {
+  PENDING
+  CONFIRMED
+  FAILED
+  CANCELLED
+}
+
+model Withdrawal {
+  id                String    @id @default(cuid())
+  userId            String
+  amount            Float
+  walletAddress     String?
+  network           CryptoNetwork?
+  status            WithdrawalStatus @default(PENDING)
+  approvalCount     Int       @default(0)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relationships
+  approvals         Approval[]
+
+  @@index([userId])
+  @@index([status])
+}
+
+enum WithdrawalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  PROCESSED
+  FAILED
+}
+
+// ============================================
+// AUDIT & LOGGING MODELS
+// ============================================
+
+model ActivityLog {
+  id                String    @id @default(cuid())
+  groupId           String
+  userId            String
+  action            String
+  description       String?
+  metadata          String?   // JSON string
+  ipAddress         String?
+  userAgent         String?
+  createdAt         DateTime  @default(now())
+
+  // Relationships
+  group             Group     @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([groupId])
+  @@index([userId])
+  @@index([createdAt])
+}
+
+model AuditLog {
+  id                String    @id @default(cuid())
+  entityType        String
+  entityId          String
+  action            String
+  changes           String?   // JSON string
+  createdBy         String?
+  createdAt         DateTime  @default(now())
+
+  @@index([entityType])
+  @@index([entityId])
+  @@index([createdAt])
+}
+
+// ============================================
+// AI & ANALYTICS MODELS
+// ============================================
+
+model CreditScore {
+  id                String    @id @default(cuid())
+  groupId           String
+  userId            String
+  score             Float     @default(500)
+  riskLevel         RiskLevel @default(MEDIUM)
+  savingsRatio      Float     @default(0)
+  repaymentHistory  Float     @default(0)
+  loanDefault       Float     @default(0)
+  activityScore     Float     @default(0)
+  lastCalculated    DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@unique([groupId, userId])
+  @@index([groupId])
+  @@index([riskLevel])
+}
+
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+model FraudAlert {
+  id                String    @id @default(cuid())
+  userId            String
+  alertType         String
+  description       String
+  severity          AlertSeverity @default(LOW)
+  isResolved        Boolean   @default(false)
+  resolvedAt        DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([userId])
+  @@index([severity])
+  @@index([isResolved])
+}
+
+enum AlertSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
